@@ -53,8 +53,8 @@ def test_qwen3_dense_lora_tp2_dp2_rollout_train_peft(tmp_path: Path) -> None:
         lora=lora,
         max_running_prompts=4,
         optimizer={
-            "lr": 1.0e-3,
-            "min_lr": 1.0e-3,
+            "lr": 1.0e-4,
+            "min_lr": 1.0e-4,
             "lr_decay_style": "constant",
             "weight_decay": 0.0,
             "grad_clip_norm": 1.0,
@@ -82,8 +82,8 @@ def test_qwen3_dense_lora_tp2_dp2_rollout_train_peft(tmp_path: Path) -> None:
         max_running_prompts=4,
         max_prompt_tokens=64,
         max_new_tokens=16,
-        optimizer_lr=1.0e-3,
-        optimizer_min_lr=1.0e-3,
+        optimizer_lr=1.0e-4,
+        optimizer_min_lr=1.0e-4,
         lr_decay_style="constant",
         weight_decay=0.0,
         activation_checkpointing=False,
@@ -107,9 +107,13 @@ def test_qwen3_dense_lora_tp2_dp2_rollout_train_peft(tmp_path: Path) -> None:
 
     observed.init()
     try:
+        parity_tokens = observed.get_tokenizer().encode(
+            "A short adapter parity check.", add_special_tokens=True
+        )
         observed.export_adapter(os.fspath(initial_path))
         policy._fit_initialized()
         replica_max_diff = inner._backend._require_train_engine().adapter_replica_max_diff()
+        trained_logprobs = observed.score_logprobs("actor", [parity_tokens], microbatch_size=1)[0]
         observed.export_adapter(os.fspath(final_path))
     finally:
         observed.close()
@@ -121,7 +125,7 @@ def test_qwen3_dense_lora_tp2_dp2_rollout_train_peft(tmp_path: Path) -> None:
     final = load_file(final_path / "adapter_model.safetensors")
     assert any(not torch.equal(initial[name], final[name]) for name in initial)
 
-    token_ids, peft_logprobs = _peft_logprobs(model_path, final_path)
+    peft_logprobs = _peft_logprobs(model_path, final_path, parity_tokens)
     imported = Trainer(
         2,
         os.fspath(model_path),
@@ -135,18 +139,24 @@ def test_qwen3_dense_lora_tp2_dp2_rollout_train_peft(tmp_path: Path) -> None:
     )
     imported.init()
     try:
-        areno_logprobs = imported.score_logprobs("actor", [token_ids], microbatch_size=1)[0]
+        areno_logprobs = imported.score_logprobs("actor", [parity_tokens], microbatch_size=1)[0]
     finally:
         imported.close()
     torch.testing.assert_close(
+        torch.tensor(areno_logprobs),
+        torch.tensor(trained_logprobs),
+        rtol=0.0,
+        atol=1.0e-5,
+    )
+    torch.testing.assert_close(
         torch.tensor(areno_logprobs[1:]),
         torch.tensor(peft_logprobs),
-        rtol=3.0e-2,
-        atol=3.0e-2,
+        rtol=0.0,
+        atol=1.5e-1,
     )
 
 
-def _peft_logprobs(model_path: Path, adapter_path: Path) -> tuple[list[int], list[float]]:
+def _peft_logprobs(model_path: Path, adapter_path: Path, token_ids: list[int]) -> list[float]:
     peft_source = os.getenv("ARENO_E2E_PEFT_SOURCE")
     if peft_source:
         sys.path.insert(0, peft_source)
@@ -160,10 +170,8 @@ def _peft_logprobs(model_path: Path, adapter_path: Path) -> tuple[list[int], lis
     importlib_util.find_spec = find_spec_without_torchao
     try:
         from peft import PeftModel
-        from transformers import AutoModelForCausalLM, AutoTokenizer
+        from transformers import AutoModelForCausalLM
 
-        tokenizer = AutoTokenizer.from_pretrained(model_path, trust_remote_code=True)
-        token_ids = tokenizer.encode("A short adapter parity check.", add_special_tokens=True)
         base = AutoModelForCausalLM.from_pretrained(model_path, dtype=torch.bfloat16).to("cuda:0")
         model = PeftModel.from_pretrained(base, adapter_path, autocast_adapter_dtype=False).eval()
         tokens = torch.tensor([token_ids], device="cuda:0", dtype=torch.long)
@@ -173,6 +181,6 @@ def _peft_logprobs(model_path: Path, adapter_path: Path) -> tuple[list[int], lis
         result = selected.cpu().tolist()
         del model, base, tokens, logits, selected
         torch.cuda.empty_cache()
-        return token_ids, result
+        return result
     finally:
         importlib_util.find_spec = original_find_spec
