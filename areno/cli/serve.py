@@ -21,6 +21,7 @@ import torch
 from fastapi import FastAPI, HTTPException, Request
 from pydantic import BaseModel, Field
 
+from areno.adapters import LoraConfig
 from areno.api.multimodal import (
     expand_image_tokens,
     image_token_counts_from_features,
@@ -178,6 +179,7 @@ def create_app(
     eager_decode: bool = False,
     attn_backend: Literal["flash", "native"] = "flash",
     chat_template_enable_thinking: bool | None = None,
+    lora: LoraConfig | None = None,
 ) -> FastAPI:
     """Construct the FastAPI app: load tokenizer/engine, install routes and lifecycle hooks."""
     if world_size < 1:
@@ -206,6 +208,7 @@ def create_app(
         devices=list(range(world_size)),
         runtime_config=RuntimeConfig(eager_decode=bool(eager_decode), attn_backend=attn_backend),
         loss_fn=_serve_loss_fn,
+        lora_config=lora,
     )
     state = ServeState(
         model_path=model_path,
@@ -780,6 +783,16 @@ def _normalize_stop(stop: str | list[str] | None) -> list[str]:
     is_flag=True,
     help="Pass enable_thinking=False to tokenizer chat templates when supported.",
 )
+@click.option("--lora-rank", type=int, default=None, help="Enable native LoRA with this rank.")
+@click.option("--lora-alpha", type=float, default=16.0, show_default=True, help="Native LoRA alpha.")
+@click.option("--lora-dropout", type=float, default=0.0, show_default=True, help="Native LoRA dropout (must be 0).")
+@click.option(
+    "--lora-target-modules",
+    default="q_proj,k_proj,v_proj,o_proj,gate_proj,up_proj,down_proj",
+    show_default=True,
+    help="Comma-separated dense Qwen3 projection targets.",
+)
+@click.option("--lora-adapter-path", default=None, help="Standard PEFT adapter to serve.")
 def serve_command(
     model_path: str,
     model_hub: Literal["hf", "modelscope"],
@@ -793,11 +806,25 @@ def serve_command(
     eager_decode: bool,
     attn_backend: Literal["flash", "native"],
     disable_thinking: bool,
+    lora_rank: int | None,
+    lora_alpha: float,
+    lora_dropout: float,
+    lora_target_modules: str,
+    lora_adapter_path: str | None,
 ) -> None:
     """Click entry point: build the app and hand it to uvicorn."""
     import uvicorn
 
     model_path = resolve_model_ref(model_path, model_hub=model_hub)
+    lora = None
+    if lora_rank is not None or lora_adapter_path is not None:
+        lora = LoraConfig(
+            rank=8 if lora_rank is None else lora_rank,
+            alpha=lora_alpha,
+            dropout=lora_dropout,
+            target_modules=tuple(item.strip() for item in lora_target_modules.split(",") if item.strip()),
+            adapter_path=lora_adapter_path,
+        )
     from areno.cli.dashboard_registry import register_dashboard_job
 
     register_dashboard_job(
@@ -827,6 +854,7 @@ def serve_command(
         eager_decode=eager_decode,
         attn_backend=attn_backend,
         chat_template_enable_thinking=False if disable_thinking else None,
+        lora=lora,
     )
     uvicorn.run(app, host=host, port=port)
 

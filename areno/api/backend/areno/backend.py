@@ -184,6 +184,8 @@ class ArenoBackend(Backend):
             raise ValueError(f"training device count must equal world_size={world_size}")
         if cfg.rollout_tp_size is not None and cfg.rollout_devices is None:
             raise ValueError("rollout_tp_size requires rollout_devices")
+        if cfg.lora is not None and cfg.uses_separate_rollout_engine():
+            raise ValueError("native LoRA currently supports colocated rollout only")
 
         if not cfg.uses_separate_rollout_engine():
             self._train_engine = ArenoEngine.from_pretrained(
@@ -196,6 +198,7 @@ class ArenoBackend(Backend):
                 runtime_config=RuntimeConfig(**cfg.runtime),
                 loss_fn=_external_loss_dispatcher,
                 policy_sync_bucket_mb=cfg.policy_sync_bucket_mb,
+                lora_config=cfg.lora,
             )
             return
         self._policy_sync_bucket_bytes = cfg.policy_sync_bucket_mb * 1024 * 1024
@@ -389,7 +392,8 @@ class ArenoBackend(Backend):
                             resp_logprobs=rollout.logprobs[i, : len(tokens)].tolist(),
                         )
                         for i, tokens in enumerate(rollout.response_ids[start:end], start=start)
-                    ]
+                    ],
+                    adapter_version=rollout.adapter_version,
                 )
             )
         return results
@@ -504,7 +508,8 @@ class ArenoBackend(Backend):
                             resp_logprobs=rollout.logprobs[i, : len(tokens)].tolist(),
                         )
                         for i, tokens in enumerate(rollout.response_ids[start:end], start=start)
-                    ]
+                    ],
+                    adapter_version=rollout.adapter_version,
                 )
             )
         return results
@@ -549,7 +554,7 @@ class ArenoBackend(Backend):
                 gradient_accumulation_steps=gradient_accumulation_steps,
             )
         stats_list = engine.step(packs, gradient_accumulation_steps=gradient_accumulation_steps)
-        if self._separate_rollout and any(bool(stats.stepped) for stats in stats_list):
+        if any(bool(stats.stepped) for stats in stats_list):
             self._train_policy_version += 1
         train_time_s = time.perf_counter() - train_start
         # `first_policy_metrics` keeps the per-step rollout/policy diagnostics
@@ -571,6 +576,8 @@ class ArenoBackend(Backend):
             metrics = {key: value / averaged_metric_counts[key] for key, value in metrics.items()}
         metrics.update(first_policy_metrics)
         result = {"loss": sum(losses) / max(len(losses), 1)}
+        if stats_list and stats_list[-1].adapter_version is not None:
+            result["adapter_version"] = stats_list[-1].adapter_version
         result.update(metrics)
         result.update(self._pending_policy_sync_metrics)
         self._pending_policy_sync_metrics = {}
@@ -591,6 +598,10 @@ class ArenoBackend(Backend):
     def save_checkpoint(self, ctx: Context, path: str) -> str:
         engine = self._require_train_engine()
         return engine.save_checkpoint(path)
+
+    def export_adapter(self, ctx: Context, path: str) -> str:
+        del ctx
+        return self._require_train_engine().export_adapter(path)
 
     def ensure_roles(self, ctx: Context, roles: dict[str, ModelRole]) -> None:
         engine = self._require_train_engine()

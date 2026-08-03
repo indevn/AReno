@@ -15,7 +15,10 @@ std::vector<torch::Tensor> areno_linear_backward_cuda(
     torch::Tensor grad_output,
     torch::Tensor input,
     torch::Tensor weight,
-    bool use_bias);
+    bool use_bias,
+    bool need_grad_input,
+    bool need_grad_weight,
+    bool need_grad_bias);
 torch::Tensor areno_causal_attention_forward_cuda(
     torch::Tensor q,
     torch::Tensor k,

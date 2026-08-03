@@ -26,11 +26,13 @@ from typing import Any
 
 import torch
 
+from areno.adapters.config import LoraConfig
 from areno.engine.checkpoints.io import resolve_model_path
 from areno.engine.config import EngineConfig, OptimizerConfig, RuntimeConfig
 from areno.engine.data import RolloutOutput, SamplingParams, TrainStats, to_cpu
 from areno.engine.protocol import (
     EnsureRolesPayload,
+    ExportAdapterPayload,
     Op,
     RoleSpecPayload,
     RolloutCacheProbePayload,
@@ -110,7 +112,17 @@ def _merge_dp_rollouts_by_prompt_indices(
         [row[2] for row in materialized],
         [row[3] for row in materialized],
         metrics=None,
+        adapter_version=_rollout_version(non_empty=[output for output in outputs if output is not None]),
     )
+
+
+def _rollout_version(*, non_empty: list[RolloutOutput]) -> int | None:
+    versions = {output.adapter_version for output in non_empty}
+    if not versions:
+        return None
+    if len(versions) != 1:
+        raise RuntimeError(f"rollout DP replicas reported different adapter versions: {versions}")
+    return versions.pop()
 
 
 class ArenoEngine:
@@ -197,6 +209,7 @@ class ArenoEngine:
         start: bool = True,
         cluster_kwargs: dict[str, Any] | None = None,
         policy_sync_bucket_mb: int = 64,
+        lora_config: LoraConfig | None = None,
     ) -> ArenoEngine:
         """Build an engine by reading model config from a checkpoint path.
 
@@ -226,6 +239,8 @@ class ArenoEngine:
             runtime=runtime_config or RuntimeConfig(),
             role=role,
             policy_sync_bucket_mb=policy_sync_bucket_mb,
+            lora=lora_config,
+            lora_seed=torch.initial_seed(),
         )
         return cls(cfg, start=start, cluster_kwargs=cluster_kwargs)
 
@@ -694,6 +709,15 @@ class ArenoEngine:
 
         results = self.cluster.call(Op.SAVE_CHECKPOINT, SaveCheckpointPayload(path=path))
         return results[0]["path"]
+
+    def export_adapter(self, path: str) -> str:
+        """Export the live native LoRA weights as a standard PEFT adapter."""
+
+        results = self.cluster.call(Op.EXPORT_ADAPTER, ExportAdapterPayload(path=path))
+        result = next((result for result in results if result is not None), None)
+        if result is None:
+            raise RuntimeError("native LoRA export did not produce an artifact")
+        return result["path"]
 
     def _transport_payload(self, payload: Any) -> Any:
         """Move tensors to CPU shared memory for zero-copy IPC to workers."""

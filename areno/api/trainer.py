@@ -533,6 +533,11 @@ class Trainer:
 
         return self._backend.save_checkpoint(self._ctx, path)
 
+    def export_adapter(self, path: str) -> str:
+        """Export the live native LoRA weights as a standard PEFT adapter."""
+
+        return self._backend.export_adapter(self._ctx, path)
+
     def close(self) -> None:
         """Release backend workers and local resources such as metric writers."""
 

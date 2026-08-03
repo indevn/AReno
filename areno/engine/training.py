@@ -116,6 +116,8 @@ class TrainingManager:
             worker.optimizer.step()
             worker.optimizer.zero_grad(set_to_none=True)
             worker._global_step += 1
+            if worker.adapter_registry is not None:
+                worker.adapter_registry.increment_version()
             if worker.device.type == "cuda" and worker._global_step % 10 == 0:
                 torch.cuda.empty_cache()
         else:
@@ -132,6 +134,9 @@ class TrainingManager:
                 "loss": float(loss.detach().cpu()),
                 "stepped": stepped,
                 "global_step": worker._global_step,
+                "adapter_version": (
+                    worker.adapter_registry.version if worker.adapter_registry is not None else None
+                ),
                 "metrics": _merge_metrics(
                     metrics,
                     None,

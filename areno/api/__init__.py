@@ -16,7 +16,7 @@ from areno.api.agentic import (
     RolloutSession,
 )
 from areno.api.algorithms import AlgorithmSpec, get_algorithm, list_algorithms, register_algorithm
-from areno.api.config import ArenoConfig
+from areno.api.config import ArenoConfig, LoraConfig
 from areno.api.data import PromptBatch, PromptItem
 from areno.api.loss_fns import dpo_loss_fn, grpo_loss_fn, gspo_loss_fn, ppo_loss_fn, sft_loss_fn
 from areno.api.models import (
@@ -38,6 +38,7 @@ __all__ = [
     "Trainer",
     "AlgorithmSpec",
     "ArenoConfig",
+    "LoraConfig",
     "PromptBatch",
     "PromptItem",
     "AgentBatch",

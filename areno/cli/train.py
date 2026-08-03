@@ -105,6 +105,11 @@ TRAIN_OPTION_GROUPS: tuple[tuple[str, tuple[str, ...]], ...] = (
             "score_micro_bs",
             "gradient_accumulation_steps",
             "activation_checkpointing",
+            "lora_rank",
+            "lora_alpha",
+            "lora_dropout",
+            "lora_target_modules",
+            "lora_adapter_path",
             "lr",
             "min_lr",
             "lr_decay_steps",
@@ -184,6 +189,7 @@ def _trainer_config_from_options(**options) -> TrainerConfig:
     args.rollout_tp_size = getattr(args, "rollout_tp_size", None)
     args.rollout_devices = getattr(args, "rollout_devices", None)
     args.policy_sync_bucket_mb = getattr(args, "policy_sync_bucket_mb", 64)
+    args.lora = _lora_config_from_options(args)
     args.train_devices = _parse_cuda_devices(getattr(args, "train_devices", None), "--train-devices")
     args.rollout_devices = _parse_cuda_devices(getattr(args, "rollout_devices", None), "--rollout-devices")
     if args.rollout_tp_size is not None and args.rollout_tp_size <= 0:
@@ -309,6 +315,26 @@ def _trainer_config_from_options(**options) -> TrainerConfig:
 def _require_positive_float(value: float, option_name: str) -> None:
     if value <= 0:
         raise click.UsageError(f"{option_name} must be positive")
+
+
+def _lora_config_from_options(args):
+    rank = getattr(args, "lora_rank", None)
+    adapter_path = getattr(args, "lora_adapter_path", None)
+    if rank is None and adapter_path is None:
+        return None
+    from areno.adapters import LoraConfig
+
+    targets = tuple(item.strip() for item in args.lora_target_modules.split(",") if item.strip())
+    try:
+        return LoraConfig(
+            rank=8 if rank is None else rank,
+            alpha=args.lora_alpha,
+            dropout=args.lora_dropout,
+            target_modules=targets,
+            adapter_path=adapter_path,
+        )
+    except ValueError as exc:
+        raise click.UsageError(str(exc)) from exc
 
 
 def _parse_cuda_devices(value: str | None, option_name: str) -> list[int] | None:
@@ -688,6 +714,7 @@ def _trainer_config_from_args(args) -> TrainerConfig:
     args.rollout_tp_size = getattr(args, "rollout_tp_size", None)
     args.rollout_devices = getattr(args, "rollout_devices", None)
     args.policy_sync_bucket_mb = getattr(args, "policy_sync_bucket_mb", 64)
+    lora = getattr(args, "lora", None)
     algorithm = get_algorithm(args.algo)
     chat_template_enable_thinking = False if args.disable_thinking else None
     if algorithm.name == "dpo":
@@ -731,6 +758,7 @@ def _trainer_config_from_args(args) -> TrainerConfig:
             chat_template_enable_thinking=chat_template_enable_thinking,
             ref_ckpt=args.ref_ckpt,
             dpo_beta=args.dpo_beta,
+            lora=lora,
         )
     if algorithm.name == "sft":
         return TrainerConfig(
@@ -771,6 +799,7 @@ def _trainer_config_from_args(args) -> TrainerConfig:
             agent_timeout_s=args.agent_timeout_s,
             train_tool_results=args.train_tool_results,
             chat_template_enable_thinking=chat_template_enable_thinking,
+            lora=lora,
         )
     if algorithm.name != "ppo":
         return PolicyTrainerConfig(
@@ -823,6 +852,7 @@ def _trainer_config_from_args(args) -> TrainerConfig:
             agent_timeout_s=args.agent_timeout_s,
             train_tool_results=args.train_tool_results,
             chat_template_enable_thinking=chat_template_enable_thinking,
+            lora=lora,
         )
     return PPOTrainerConfig(
         algo=algorithm.name,
@@ -888,6 +918,7 @@ def _trainer_config_from_args(args) -> TrainerConfig:
         agent_timeout_s=args.agent_timeout_s,
         train_tool_results=args.train_tool_results,
         chat_template_enable_thinking=chat_template_enable_thinking,
+        lora=lora,
     )
 
 
@@ -1397,6 +1428,16 @@ def _dataset_builder_for_suffix(suffix: str) -> str:
     help="Override global concurrent rollout prompts; defaults to batch-size * n-samples.",
 )
 @click.option("--lr", type=float, default=1.0e-6, show_default=True, help="Policy optimizer learning rate.")
+@click.option("--lora-rank", type=int, default=None, help="Enable native LoRA with this rank.")
+@click.option("--lora-alpha", type=float, default=16.0, show_default=True, help="Native LoRA alpha.")
+@click.option("--lora-dropout", type=float, default=0.0, show_default=True, help="Native LoRA dropout (must be 0).")
+@click.option(
+    "--lora-target-modules",
+    default="q_proj,k_proj,v_proj,o_proj,gate_proj,up_proj,down_proj",
+    show_default=True,
+    help="Comma-separated dense Qwen3 projection targets.",
+)
+@click.option("--lora-adapter-path", default=None, help="Standard PEFT adapter used to initialize native LoRA.")
 @click.option("--min-lr", type=float, default=1.0e-7, show_default=True, help="Policy optimizer minimum learning rate.")
 @click.option("--lr-decay-steps", type=int, default=1000, show_default=True, help="Policy LR decay steps.")
 @click.option("--lr-decay-style", default="cosine", show_default=True, help="Policy LR decay style.")

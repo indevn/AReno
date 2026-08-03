@@ -13,6 +13,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from areno.adapters.config import LoraConfig
 from areno.api.defaults import DEFAULT_METRICS_LOG_DIR
 
 
@@ -61,6 +62,7 @@ class TrainerConfig:
     agent_timeout_s: float = 300.0
     train_tool_results: bool = False
     chat_template_enable_thinking: bool | None = None
+    lora: LoraConfig | None = None
 
     def __post_init__(self) -> None:
         if self.attn_backend not in {"flash", "native"}:
@@ -101,6 +103,7 @@ class TrainerConfig:
                 "eager_decode": self.eager_decode,
                 "attn_backend": self.attn_backend,
             },
+            lora=self.lora,
         )
 
 
@@ -144,6 +147,7 @@ class RolloutTrainerConfig(TrainerConfig):
                 "eager_decode": self.eager_decode,
                 "attn_backend": self.attn_backend,
             },
+            lora=self.lora,
         )
 
 

@@ -193,57 +193,64 @@ std::vector<torch::Tensor> areno_linear_backward_cuda(
     torch::Tensor grad_output,
     torch::Tensor input,
     torch::Tensor weight,
-    bool use_bias) {
+    bool use_bias,
+    bool need_grad_input,
+    bool need_grad_weight,
+    bool need_grad_bias) {
   TORCH_CHECK(grad_output.is_cuda(), "areno_linear grad_output must be CUDA");
   TORCH_CHECK(input.is_cuda(), "areno_linear input must be CUDA");
   TORCH_CHECK(weight.is_cuda(), "areno_linear weight must be CUDA");
   TORCH_CHECK(input.scalar_type() == weight.scalar_type(), "areno_linear input and weight dtype must match");
   TORCH_CHECK(grad_output.scalar_type() == input.scalar_type(), "areno_linear grad dtype must match input");
 
-  auto grad_input = torch::empty_like(input);
-  auto grad_weight = torch::empty_like(weight);
-  auto grad_bias = use_bias ? areno_accel::reduce_bias_grad(grad_output) : torch::empty({0}, grad_output.options());
+  auto grad_input = need_grad_input ? torch::empty_like(input) : torch::empty({0}, input.options());
+  auto grad_weight = need_grad_weight ? torch::empty_like(weight) : torch::empty({0}, weight.options());
+  auto grad_bias = need_grad_bias ? areno_accel::reduce_bias_grad(grad_output) : torch::empty({0}, grad_output.options());
   int64_t k = input.size(-1);
   int64_t m = input.numel() / k;
   int64_t n = weight.size(0);
 
   const at::cuda::OptionalCUDAGuard guard(device_of(input));
-  cublasHandle_t handle = at::cuda::getCurrentCUDABlasHandle();
-  auto dtype = areno_accel::cuda_type(input.scalar_type());
-
-  areno_accel::gemm_row_major(
-      handle,
-      CUBLAS_OP_N,
-      CUBLAS_OP_N,
-      k,
-      m,
-      n,
-      weight.data_ptr(),
-      dtype,
-      k,
-      grad_output.data_ptr(),
-      dtype,
-      n,
-      grad_input.data_ptr(),
-      dtype,
-      k);
-
-  areno_accel::gemm_row_major(
-      handle,
-      CUBLAS_OP_N,
-      CUBLAS_OP_T,
-      k,
-      n,
-      m,
-      input.data_ptr(),
-      dtype,
-      k,
-      grad_output.data_ptr(),
-      dtype,
-      n,
-      grad_weight.data_ptr(),
-      dtype,
-      k);
+  if (need_grad_input || need_grad_weight) {
+    cublasHandle_t handle = at::cuda::getCurrentCUDABlasHandle();
+    auto dtype = areno_accel::cuda_type(input.scalar_type());
+    if (need_grad_input) {
+      areno_accel::gemm_row_major(
+          handle,
+          CUBLAS_OP_N,
+          CUBLAS_OP_N,
+          k,
+          m,
+          n,
+          weight.data_ptr(),
+          dtype,
+          k,
+          grad_output.data_ptr(),
+          dtype,
+          n,
+          grad_input.data_ptr(),
+          dtype,
+          k);
+    }
+    if (need_grad_weight) {
+      areno_accel::gemm_row_major(
+          handle,
+          CUBLAS_OP_N,
+          CUBLAS_OP_T,
+          k,
+          n,
+          m,
+          input.data_ptr(),
+          dtype,
+          k,
+          grad_output.data_ptr(),
+          dtype,
+          n,
+          grad_weight.data_ptr(),
+          dtype,
+          k);
+    }
+  }
 
   return {grad_input, grad_weight, grad_bias};
 }

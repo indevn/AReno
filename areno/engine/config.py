@@ -16,6 +16,8 @@ from typing import Any, Literal
 
 import torch
 
+from areno.adapters.config import LoraConfig
+
 # AReno's flash path uses flash-attn features beyond the Turing-compatible
 # forward kernels, including paged KV/cache and training paths, so require
 # Ampere+ even though flash-attn 2.x has partial sm75 forward support.
@@ -236,6 +238,8 @@ class EngineConfig:
     dummy_load: bool = False
     role: Literal["train", "rollout"] = "train"
     policy_sync_bucket_mb: int = 64
+    lora: LoraConfig | None = None
+    lora_seed: int = 0
 
     def __post_init__(self) -> None:
         """Infer DP/devices and validate the distributed layout."""
