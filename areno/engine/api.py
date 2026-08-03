@@ -719,6 +719,12 @@ class ArenoEngine:
             raise RuntimeError("native LoRA export did not produce an artifact")
         return result["path"]
 
+    def adapter_replica_max_diff(self) -> float:
+        """Run the lightweight final adapter DP replica check."""
+
+        results = self.cluster.call(Op.ADAPTER_REPLICA_MAX_DIFF)
+        return max(float(result) for result in results if result is not None)
+
     def _transport_payload(self, payload: Any) -> Any:
         """Move tensors to CPU shared memory for zero-copy IPC to workers."""
 

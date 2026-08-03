@@ -44,6 +44,7 @@ class Op(Enum):
     ROLLOUT_SESSION_END = auto()
     SAVE_CHECKPOINT = auto()
     EXPORT_ADAPTER = auto()
+    ADAPTER_REPLICA_MAX_DIFF = auto()
     POLICY_SYNC_PLAN = auto()
     POLICY_SYNC_PUBLISH = auto()
     POLICY_SYNC_RECEIVE = auto()

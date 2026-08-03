@@ -142,6 +142,8 @@ class ArenoWorker:
             return self.save_checkpoint(cmd.payload)
         if cmd.op is Op.EXPORT_ADAPTER:
             return self.export_adapter(cmd.payload)
+        if cmd.op is Op.ADAPTER_REPLICA_MAX_DIFF:
+            return self.adapter_replica_max_diff(cmd.payload)
         if cmd.op is Op.POLICY_SYNC_PLAN:
             return self.policy_sync_plan(cmd.payload)
         if cmd.op is Op.POLICY_SYNC_PUBLISH:
@@ -570,6 +572,25 @@ class ArenoWorker:
             base_model_name_or_path=self.config.model_path,
         )
         return {"path": path} if path is not None else None
+
+    @torch.no_grad()
+    def adapter_replica_max_diff(self, payload: None) -> float | None:
+        """Return one final same-TP-coordinate DP replica comparison."""
+
+        del payload
+        if self.adapter_registry is None:
+            return None
+        ctx = get_tp_context()
+        values = torch.cat([parameter.detach().float().reshape(-1) for parameter in self.adapter_registry.parameters()])
+        if ctx.dp_size > 1:
+            maximum = values.clone()
+            minimum = values.clone()
+            dist.all_reduce(maximum, op=dist.ReduceOp.MAX, group=ctx.dp_group)
+            dist.all_reduce(minimum, op=dist.ReduceOp.MIN, group=ctx.dp_group)
+            difference = (maximum - minimum).abs().max()
+        else:
+            difference = values.new_zeros(())
+        return float(difference.cpu()) if ctx.is_rank0 else None
 
 
 def _rollout_payloads_compatible(first: RolloutPayload, other: RolloutPayload) -> bool:
