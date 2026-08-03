@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import sys
+from importlib import util as importlib_util
 from pathlib import Path
 
 import pytest
@@ -149,18 +150,29 @@ def _peft_logprobs(model_path: Path, adapter_path: Path) -> tuple[list[int], lis
     peft_source = os.getenv("ARENO_E2E_PEFT_SOURCE")
     if peft_source:
         sys.path.insert(0, peft_source)
-    from peft import PeftModel
-    from transformers import AutoModelForCausalLM, AutoTokenizer
+    original_find_spec = importlib_util.find_spec
 
-    tokenizer = AutoTokenizer.from_pretrained(model_path, trust_remote_code=True)
-    token_ids = tokenizer.encode("A short adapter parity check.", add_special_tokens=True)
-    base = AutoModelForCausalLM.from_pretrained(model_path, dtype=torch.bfloat16).to("cuda:0")
-    model = PeftModel.from_pretrained(base, adapter_path, autocast_adapter_dtype=False).eval()
-    tokens = torch.tensor([token_ids], device="cuda:0", dtype=torch.long)
-    with torch.inference_mode():
-        logits = model(input_ids=tokens).logits[0, :-1].float()
-        selected = logits.log_softmax(dim=-1).gather(-1, tokens[0, 1:].unsqueeze(-1)).squeeze(-1)
-    result = selected.cpu().tolist()
-    del model, base, tokens, logits, selected
-    torch.cuda.empty_cache()
-    return token_ids, result
+    def find_spec_without_torchao(name, *args, **kwargs):
+        if name == "torchao":
+            return None
+        return original_find_spec(name, *args, **kwargs)
+
+    importlib_util.find_spec = find_spec_without_torchao
+    try:
+        from peft import PeftModel
+        from transformers import AutoModelForCausalLM, AutoTokenizer
+
+        tokenizer = AutoTokenizer.from_pretrained(model_path, trust_remote_code=True)
+        token_ids = tokenizer.encode("A short adapter parity check.", add_special_tokens=True)
+        base = AutoModelForCausalLM.from_pretrained(model_path, dtype=torch.bfloat16).to("cuda:0")
+        model = PeftModel.from_pretrained(base, adapter_path, autocast_adapter_dtype=False).eval()
+        tokens = torch.tensor([token_ids], device="cuda:0", dtype=torch.long)
+        with torch.inference_mode():
+            logits = model(input_ids=tokens).logits[0, :-1].float()
+            selected = logits.log_softmax(dim=-1).gather(-1, tokens[0, 1:].unsqueeze(-1)).squeeze(-1)
+        result = selected.cpu().tolist()
+        del model, base, tokens, logits, selected
+        torch.cuda.empty_cache()
+        return token_ids, result
+    finally:
+        importlib_util.find_spec = original_find_spec
