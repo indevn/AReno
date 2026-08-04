@@ -197,7 +197,7 @@ class Qwen3MoeMLP(nn.Module):
         self.num_experts = config.num_experts
         self.top_k = config.num_experts_per_tok
         self.norm_topk_prob = config.norm_topk_prob
-        self.gate = nn.Parameter(torch.empty(self.num_experts, config.hidden_size, dtype=torch.float32))
+        self.gate = nn.Parameter(torch.empty(self.num_experts, config.hidden_size, dtype=config.dtype))
         mark_tensor_parallel_parameter(self.gate, False, sequence_parallel=False, tp_grad_allreduce=True)
         self.experts = Qwen3MoeExperts(config)
         self.register_buffer("_infer_w1_weight", torch.empty(0), persistent=False)
