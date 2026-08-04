@@ -116,6 +116,7 @@ def test_qwen3_lora_tp2_dp2_rollout_train_peft(tmp_path: Path, model_env: str, m
     try:
         parity_tokens = observed.get_tokenizer().encode("A short adapter parity check.", add_special_tokens=True)
         observed.export_adapter(os.fspath(initial_path))
+        initial_native_logprobs = observed.score_logprobs("actor", [parity_tokens], microbatch_size=1)[0]
         policy._fit_initialized()
         replica_max_diff = inner._backend._require_train_engine().adapter_replica_max_diff()
         trained_logprobs = observed.score_logprobs("actor", [parity_tokens], microbatch_size=1)[0]
@@ -132,7 +133,11 @@ def test_qwen3_lora_tp2_dp2_rollout_train_peft(tmp_path: Path, model_env: str, m
     if model_kind == "moe":
         assert any(".experts.0." in name for name in final)
 
+    initial_peft_logprobs = _peft_logprobs(model_path, initial_path, parity_tokens)
     peft_logprobs = _peft_logprobs(model_path, final_path, parity_tokens)
+    torch.testing.assert_close(
+        torch.tensor(initial_native_logprobs[1:]), torch.tensor(initial_peft_logprobs), rtol=0.0, atol=1.5e-1
+    )
     imported = Trainer(
         4,
         os.fspath(model_path),
