@@ -1439,7 +1439,7 @@ def _dataset_builder_for_suffix(suffix: str) -> str:
     "--lora-target-modules",
     default="q_proj,k_proj,v_proj,o_proj,gate_proj,up_proj,down_proj",
     show_default=True,
-    help="Comma-separated dense Qwen3 projection targets.",
+    help="Comma-separated Qwen3 projection targets (MoE MLP targets apply to each routed expert).",
 )
 @click.option("--lora-adapter-path", default=None, help="Standard PEFT adapter used to initialize native LoRA.")
 @click.option("--min-lr", type=float, default=1.0e-7, show_default=True, help="Policy optimizer minimum learning rate.")
