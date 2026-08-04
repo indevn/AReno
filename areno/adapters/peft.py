@@ -9,7 +9,7 @@ import torch
 import torch.distributed as dist
 from safetensors.torch import load_file, save_file
 
-from areno.adapters.lora import AdapterRegistry
+from areno.adapters.lora import AdapterRegistry, RoutedExpertLoraSlot
 from areno.engine.parallel.context import get_tp_context
 
 _PREFIX = "base_model.model.model."
@@ -26,6 +26,17 @@ def load_peft_adapter(registry: AdapterRegistry, path: str | Path) -> None:
     tensors = load_file(input_path / "adapter_model.safetensors", device="cpu")
     ctx = get_tp_context()
     for logical_name, slot in registry.slots.items():
+        if isinstance(slot, RoutedExpertLoraSlot):
+            for local_expert_id in range(slot.local_num_experts):
+                expert_id = slot.local_expert_start + local_expert_id
+                expert_name = logical_name.format(expert=expert_id)
+                slot.lora_A[local_expert_id].copy_(
+                    tensors[_key(expert_name, "A")].to(device=slot.lora_A.device, dtype=slot.lora_A.dtype)
+                )
+                slot.lora_B[local_expert_id].copy_(
+                    tensors[_key(expert_name, "B")].to(device=slot.lora_B.device, dtype=slot.lora_B.dtype)
+                )
+            continue
         canonical_A = tensors[_key(logical_name, "A")]
         canonical_B = tensors[_key(logical_name, "B")]
         if slot.row_parallel:
@@ -57,6 +68,14 @@ def export_peft_adapter(
         gathered_A = _all_gather(slot.lora_A.detach(), ctx.world_size, ctx.group)
         gathered_B = _all_gather(slot.lora_B.detach(), ctx.world_size, ctx.group)
         if ctx.rank != 0:
+            continue
+        if isinstance(slot, RoutedExpertLoraSlot):
+            canonical_A = torch.cat(gathered_A, dim=0)
+            canonical_B = torch.cat(gathered_B, dim=0)
+            for expert_id in range(canonical_A.shape[0]):
+                expert_name = logical_name.format(expert=expert_id)
+                state[_key(expert_name, "A")] = canonical_A[expert_id].float().cpu().contiguous()
+                state[_key(expert_name, "B")] = canonical_B[expert_id].float().cpu().contiguous()
             continue
         canonical_A = torch.cat(gathered_A, dim=1) if slot.row_parallel else gathered_A[0]
         canonical_B = gathered_B[0] if slot.row_parallel else torch.cat(gathered_B, dim=0)

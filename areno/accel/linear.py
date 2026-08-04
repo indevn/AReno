@@ -80,13 +80,16 @@ class _GroupedLinear(torch.autograd.Function):
     @staticmethod
     def backward(ctx, grad_output: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, None]:
         x, weight = ctx.saved_tensors
+        need_grad_input, need_grad_weight, _ = ctx.needs_input_grad
         grad_input, grad_weight = _extension().areno_grouped_linear_backward(
             grad_output.contiguous(),
             x.contiguous(),
             weight.contiguous(),
             ctx.tokens_per_expert,
+            need_grad_input,
+            need_grad_weight,
         )
-        return grad_input, grad_weight, None
+        return grad_input if need_grad_input else None, grad_weight if need_grad_weight else None, None
 
 
 class _GroupedLinearCounts(torch.autograd.Function):
@@ -103,13 +106,16 @@ class _GroupedLinearCounts(torch.autograd.Function):
     @staticmethod
     def backward(ctx, grad_output: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, None]:
         x, weight, tokens_per_expert = ctx.saved_tensors
+        need_grad_input, need_grad_weight, _ = ctx.needs_input_grad
         grad_input, grad_weight = _extension().areno_grouped_linear_backward_counts(
             grad_output.contiguous(),
             x.contiguous(),
             weight.contiguous(),
             tokens_per_expert.contiguous(),
+            need_grad_input,
+            need_grad_weight,
         )
-        return grad_input, grad_weight, None
+        return grad_input if need_grad_input else None, grad_weight if need_grad_weight else None, None
 
 
 @torch._dynamo.disable

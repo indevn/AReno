@@ -1,4 +1,4 @@
-"""Single Qwen3 dense TP2/DP2 native-LoRA rollout/train/PEFT E2E."""
+"""Qwen3 dense and MoE TP2/DP2 native-LoRA rollout/train/PEFT E2E."""
 
 from __future__ import annotations
 
@@ -38,10 +38,14 @@ class _ObservedTrainer:
         return result
 
 
-def test_qwen3_dense_lora_tp2_dp2_rollout_train_peft(tmp_path: Path) -> None:
-    model_path_value = os.getenv("ARENO_E2E_QWEN3_MODEL")
+@pytest.mark.parametrize(
+    ("model_env", "model_kind"),
+    (("ARENO_E2E_QWEN3_MODEL", "dense"), ("ARENO_E2E_QWEN3_MOE_MODEL", "moe")),
+)
+def test_qwen3_lora_tp2_dp2_rollout_train_peft(tmp_path: Path, model_env: str, model_kind: str) -> None:
+    model_path_value = os.getenv(model_env)
     if not model_path_value:
-        pytest.skip("set ARENO_E2E_QWEN3_MODEL to run the 4-GPU LoRA E2E")
+        pytest.skip(f"set {model_env} to run the 4-GPU Qwen3 {model_kind} LoRA E2E")
     model_path = Path(model_path_value)
     initial_path = tmp_path / "adapter-initial"
     final_path = tmp_path / "adapter-final"
@@ -124,6 +128,8 @@ def test_qwen3_dense_lora_tp2_dp2_rollout_train_peft(tmp_path: Path) -> None:
     initial = load_file(initial_path / "adapter_model.safetensors")
     final = load_file(final_path / "adapter_model.safetensors")
     assert any(not torch.equal(initial[name], final[name]) for name in initial)
+    if model_kind == "moe":
+        assert any(".experts.0." in name for name in final)
 
     peft_logprobs = _peft_logprobs(model_path, final_path, parity_tokens)
     imported = Trainer(

@@ -1,4 +1,4 @@
-"""Public configuration for the Qwen3 dense LoRA runtime."""
+"""Public configuration for the Qwen3 dense and MoE LoRA runtime."""
 
 from __future__ import annotations
 
@@ -17,7 +17,7 @@ QWEN3_DENSE_TARGETS = (
 
 @dataclass(frozen=True, slots=True)
 class LoraConfig:
-    """Supported PEFT-compatible LoRA subset for dense Qwen3 models."""
+    """Supported PEFT-compatible LoRA subset for Qwen3 dense and MoE models."""
 
     rank: int = 8
     alpha: float = 16.0

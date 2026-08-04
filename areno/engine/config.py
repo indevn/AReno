@@ -100,6 +100,19 @@ class RuntimeConfig:
         )
         self.compile_model = False
 
+    def resolve_eager_decode(self, *, model: ModelConfig, lora: LoraConfig | None) -> None:
+        """Use eager decode when routed-expert adapters need grouped execution."""
+
+        if self.eager_decode or lora is None:
+            return
+        if model.model_type == "qwen3_moe" and {"gate_proj", "up_proj", "down_proj"} & set(lora.target_modules):
+            warnings.warn(
+                "Qwen3-MoE expert LoRA uses grouped execution during rollout; falling back to eager decode.",
+                RuntimeWarning,
+                stacklevel=2,
+            )
+            self.eager_decode = True
+
 
 @dataclass(slots=True)
 class ModelConfig:
@@ -280,6 +293,7 @@ class EngineConfig:
             raise ValueError("runtime.kv_block_size must be a multiple of 256 for FlashAttention paged KV")
         self.runtime.resolve_attn_backend(model=self.model, devices=self.devices)
         self.runtime.resolve_compile_model(model=self.model, devices=self.devices)
+        self.runtime.resolve_eager_decode(model=self.model, lora=self.lora)
         self.model.attn_backend = self.runtime.attn_backend
 
 

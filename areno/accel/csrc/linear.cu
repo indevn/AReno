@@ -343,7 +343,9 @@ std::vector<torch::Tensor> areno_grouped_linear_backward_cuda(
     torch::Tensor grad_output,
     torch::Tensor input,
     torch::Tensor weight,
-    std::vector<int64_t> tokens_per_expert) {
+    std::vector<int64_t> tokens_per_expert,
+    bool need_grad_input,
+    bool need_grad_weight) {
   TORCH_CHECK(grad_output.is_cuda(), "areno_grouped_linear grad_output must be CUDA");
   TORCH_CHECK(input.is_cuda(), "areno_grouped_linear input must be CUDA");
   TORCH_CHECK(weight.is_cuda(), "areno_grouped_linear weight must be CUDA");
@@ -367,8 +369,8 @@ std::vector<torch::Tensor> areno_grouped_linear_backward_cuda(
   }
   TORCH_CHECK(total_tokens == input.size(0), "tokens_per_expert sum must match input rows");
 
-  auto grad_input = torch::empty_like(input);
-  auto grad_weight = torch::zeros_like(weight);
+  auto grad_input = need_grad_input ? torch::empty_like(input) : torch::empty({0}, input.options());
+  auto grad_weight = need_grad_weight ? torch::zeros_like(weight) : torch::empty({0}, weight.options());
   const at::cuda::OptionalCUDAGuard guard(device_of(input));
   cublasHandle_t handle = at::cuda::getCurrentCUDABlasHandle();
   auto dtype = areno_accel::cuda_type(input.scalar_type());
@@ -386,42 +388,44 @@ std::vector<torch::Tensor> areno_grouped_linear_backward_cuda(
       const void* expert_weight = weight_base + expert * n * k * elem_size;
       const void* expert_input = input_base + offset * k * elem_size;
       const void* expert_grad_output = grad_output_base + offset * n * elem_size;
-      void* expert_grad_input = grad_input_base + offset * k * elem_size;
-      void* expert_grad_weight = grad_weight_base + expert * n * k * elem_size;
-
-      areno_accel::gemm_row_major(
-          handle,
-          CUBLAS_OP_N,
-          CUBLAS_OP_N,
-          k,
-          m,
-          n,
-          expert_weight,
-          dtype,
-          k,
-          expert_grad_output,
-          dtype,
-          n,
-          expert_grad_input,
-          dtype,
-          k);
-
-      areno_accel::gemm_row_major(
-          handle,
-          CUBLAS_OP_N,
-          CUBLAS_OP_T,
-          k,
-          n,
-          m,
-          expert_input,
-          dtype,
-          k,
-          expert_grad_output,
-          dtype,
-          n,
-          expert_grad_weight,
-          dtype,
-          k);
+      if (need_grad_input) {
+        void* expert_grad_input = grad_input_base + offset * k * elem_size;
+        areno_accel::gemm_row_major(
+            handle,
+            CUBLAS_OP_N,
+            CUBLAS_OP_N,
+            k,
+            m,
+            n,
+            expert_weight,
+            dtype,
+            k,
+            expert_grad_output,
+            dtype,
+            n,
+            expert_grad_input,
+            dtype,
+            k);
+      }
+      if (need_grad_weight) {
+        void* expert_grad_weight = grad_weight_base + expert * n * k * elem_size;
+        areno_accel::gemm_row_major(
+            handle,
+            CUBLAS_OP_N,
+            CUBLAS_OP_T,
+            k,
+            n,
+            m,
+            expert_input,
+            dtype,
+            k,
+            expert_grad_output,
+            dtype,
+            n,
+            expert_grad_weight,
+            dtype,
+            k);
+      }
     }
     offset += m;
   }
@@ -432,7 +436,9 @@ std::vector<torch::Tensor> areno_grouped_linear_backward_counts_cuda(
     torch::Tensor grad_output,
     torch::Tensor input,
     torch::Tensor weight,
-    torch::Tensor tokens_per_expert) {
+    torch::Tensor tokens_per_expert,
+    bool need_grad_input,
+    bool need_grad_weight) {
   TORCH_CHECK(tokens_per_expert.is_cuda(), "areno_grouped_linear tokens_per_expert must be CUDA");
   TORCH_CHECK(tokens_per_expert.dim() == 1, "areno_grouped_linear tokens_per_expert must be 1D");
   TORCH_CHECK(tokens_per_expert.scalar_type() == at::kLong || tokens_per_expert.scalar_type() == at::kInt, "areno_grouped_linear tokens_per_expert must be int32 or int64");
@@ -450,5 +456,6 @@ std::vector<torch::Tensor> areno_grouped_linear_backward_counts_cuda(
       counts[static_cast<size_t>(i)] = static_cast<int64_t>(ptr[i]);
     }
   }
-  return areno_grouped_linear_backward_cuda(grad_output, input, weight, counts);
+  return areno_grouped_linear_backward_cuda(
+      grad_output, input, weight, counts, need_grad_input, need_grad_weight);
 }
