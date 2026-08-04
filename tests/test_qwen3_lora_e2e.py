@@ -133,12 +133,12 @@ def test_qwen3_lora_tp2_dp2_rollout_train_peft(tmp_path: Path, model_env: str, m
 
     peft_logprobs = _peft_logprobs(model_path, final_path, parity_tokens)
     imported = Trainer(
-        2,
+        4,
         os.fspath(model_path),
         custom_config=ArenoConfig(
             tp_size=2,
-            dp_size=1,
-            devices=[0, 1],
+            dp_size=2,
+            devices=[0, 1, 2, 3],
             lora=LoraConfig(adapter_path=os.fspath(final_path)),
             runtime={"compile_model": False, "activation_checkpointing": False},
         ),
