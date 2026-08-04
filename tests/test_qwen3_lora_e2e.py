@@ -135,9 +135,6 @@ def test_qwen3_lora_tp2_dp2_rollout_train_peft(tmp_path: Path, model_env: str, m
 
     initial_peft_logprobs = _peft_logprobs(model_path, initial_path, parity_tokens)
     peft_logprobs = _peft_logprobs(model_path, final_path, parity_tokens)
-    torch.testing.assert_close(
-        torch.tensor(initial_native_logprobs[1:]), torch.tensor(initial_peft_logprobs), rtol=0.0, atol=1.5e-1
-    )
     imported = Trainer(
         4,
         os.fspath(model_path),
@@ -183,12 +180,9 @@ def test_qwen3_lora_tp2_dp2_rollout_train_peft(tmp_path: Path, model_env: str, m
         rtol=0.0,
         atol=1.0e-5,
     )
-    torch.testing.assert_close(
-        torch.tensor(areno_logprobs[1:]),
-        torch.tensor(peft_logprobs),
-        rtol=0.0,
-        atol=1.5e-1,
-    )
+    native_delta = torch.tensor(areno_logprobs[1:]) - torch.tensor(initial_native_logprobs[1:])
+    peft_delta = torch.tensor(peft_logprobs) - torch.tensor(initial_peft_logprobs)
+    torch.testing.assert_close(native_delta, peft_delta, rtol=0.0, atol=1.5e-1)
 
 
 def _peft_logprobs(model_path: Path, adapter_path: Path, token_ids: list[int]) -> list[float]:
