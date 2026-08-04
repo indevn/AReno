@@ -153,6 +153,23 @@ def test_qwen3_lora_tp2_dp2_rollout_train_peft(tmp_path: Path, model_env: str, m
     reexported = load_file(reexported_path / "adapter_model.safetensors")
     assert reexported.keys() == final.keys()
     assert all(torch.equal(reexported[name], final[name]) for name in final)
+    replica = Trainer(
+        4,
+        os.fspath(model_path),
+        custom_config=ArenoConfig(
+            tp_size=2,
+            dp_size=2,
+            devices=[0, 1, 2, 3],
+            lora=LoraConfig(adapter_path=os.fspath(final_path)),
+            runtime={"compile_model": False, "activation_checkpointing": False},
+        ),
+    )
+    replica.init()
+    try:
+        replica_logprobs = replica.score_logprobs("actor", [parity_tokens], microbatch_size=1)[0]
+    finally:
+        replica.close()
+    torch.testing.assert_close(torch.tensor(replica_logprobs), torch.tensor(areno_logprobs), rtol=0.0, atol=1.0e-5)
     torch.testing.assert_close(
         torch.tensor(areno_logprobs),
         torch.tensor(trained_logprobs),
