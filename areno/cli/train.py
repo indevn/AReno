@@ -17,7 +17,7 @@ import json
 import logging
 import shutil
 import textwrap
-from dataclasses import fields
+from dataclasses import asdict, fields, is_dataclass
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -984,13 +984,17 @@ def _write_dashboard_run_config(config: TrainerConfig) -> None:
 def _training_config_settings(config: TrainerConfig) -> dict:
     used: set[str] = set()
 
+    def value(name: str):
+        item = getattr(config, name)
+        return asdict(item) if is_dataclass(item) else item
+
     def section(title: str, names: list[str]) -> dict:
         items = []
         for name in names:
             if not hasattr(config, name):
                 continue
             used.add(name)
-            items.append({"key": name, "value": getattr(config, name)})
+            items.append({"key": name, "value": value(name)})
         return {"title": title, "items": items}
 
     sections = [
@@ -1088,7 +1092,7 @@ def _training_config_settings(config: TrainerConfig) -> dict:
     extras = []
     for field in fields(config):
         if field.name not in used:
-            extras.append({"key": field.name, "value": getattr(config, field.name)})
+            extras.append({"key": field.name, "value": value(field.name)})
     if extras:
         sections.append({"title": "Other", "items": extras})
     if isinstance(config, RolloutTrainerConfig):
