@@ -148,11 +148,13 @@ def test_qwen3_lora_tp2_dp2_rollout_train_peft(tmp_path: Path, model_env: str, m
     try:
         imported.export_adapter(os.fspath(reexported_path))
         areno_logprobs = imported.score_logprobs("actor", [parity_tokens], microbatch_size=1)[0]
+        repeated_logprobs = imported.score_logprobs("actor", [parity_tokens], microbatch_size=1)[0]
     finally:
         imported.close()
     reexported = load_file(reexported_path / "adapter_model.safetensors")
     assert reexported.keys() == final.keys()
     assert all(torch.equal(reexported[name], final[name]) for name in final)
+    torch.testing.assert_close(torch.tensor(repeated_logprobs), torch.tensor(areno_logprobs), rtol=0.0, atol=1.0e-5)
     replica = Trainer(
         4,
         os.fspath(model_path),
