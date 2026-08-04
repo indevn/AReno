@@ -48,13 +48,9 @@ class LoraSlot(nn.Module):
         self.register_buffer("scale", torch.tensor(config.scale, device=base_weight.device, dtype=torch.float32))
         if row_parallel:
             mark_tensor_parallel_parameter(self.lora_A, True, sequence_parallel=True)
-            mark_tensor_parallel_parameter(
-                self.lora_B, False, sequence_parallel=True, tp_grad_allreduce=True
-            )
+            mark_tensor_parallel_parameter(self.lora_B, False, sequence_parallel=True, tp_grad_allreduce=True)
         else:
-            mark_tensor_parallel_parameter(
-                self.lora_A, False, sequence_parallel=True, tp_grad_allreduce=True
-            )
+            mark_tensor_parallel_parameter(self.lora_A, False, sequence_parallel=True, tp_grad_allreduce=True)
             mark_tensor_parallel_parameter(self.lora_B, True, sequence_parallel=True)
         self._reset_parameters(seed, ctx.rank, ctx.world_size)
 

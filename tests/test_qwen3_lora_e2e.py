@@ -95,8 +95,10 @@ def test_qwen3_dense_lora_tp2_dp2_rollout_train_peft(tmp_path: Path) -> None:
         {"prompt": "Write one uncommon English noun. Output only the noun."},
         {"prompt": "Invent one short fictional name. Output only the name."},
     ]
+
     def reward_fn(record) -> float:
         return float(record.metadata["sample_index"])
+
     policy = PolicyOnlyTrainer(
         config,
         instance=observed,
@@ -107,9 +109,7 @@ def test_qwen3_dense_lora_tp2_dp2_rollout_train_peft(tmp_path: Path) -> None:
 
     observed.init()
     try:
-        parity_tokens = observed.get_tokenizer().encode(
-            "A short adapter parity check.", add_special_tokens=True
-        )
+        parity_tokens = observed.get_tokenizer().encode("A short adapter parity check.", add_special_tokens=True)
         observed.export_adapter(os.fspath(initial_path))
         policy._fit_initialized()
         replica_max_diff = inner._backend._require_train_engine().adapter_replica_max_diff()

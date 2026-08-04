@@ -134,9 +134,7 @@ class TrainingManager:
                 "loss": float(loss.detach().cpu()),
                 "stepped": stepped,
                 "global_step": worker._global_step,
-                "adapter_version": (
-                    worker.adapter_registry.version if worker.adapter_registry is not None else None
-                ),
+                "adapter_version": (worker.adapter_registry.version if worker.adapter_registry is not None else None),
                 "metrics": _merge_metrics(
                     metrics,
                     None,
