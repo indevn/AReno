@@ -42,6 +42,8 @@ from areno.engine.protocol import (
 from areno.engine.roles import RoleManager, WorkerRole
 from areno.engine.runtime.common import pad_rollout_rows
 from areno.engine.runtime.decode_graph import DecodeGraph
+import os
+
 from areno.engine.runtime.rollout import _empty_rollout
 from areno.engine.training import TrainingManager
 from areno.models.registry import load_model_weights, save_model_weights
@@ -68,7 +70,7 @@ class ArenoWorker:
         self.adapter_registry = (
             initialize_lora(self.model, config.lora, seed=config.lora_seed) if config.lora is not None else None
         )
-        if config.runtime.compile_model:
+        if config.runtime.compile_model and os.environ.get("ARENO_DISABLE_COMPILE") != "1":
             self.model = torch.compile(self.model)
         if self.adapter_registry is not None and config.lora.adapter_path is not None:
             load_peft_adapter(self.adapter_registry, config.lora.adapter_path)
