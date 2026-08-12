@@ -56,7 +56,7 @@ def test_qwen3_lora_tp2_dp2_rollout_train_peft(tmp_path: Path, model_env: str, m
     checkpoint_path = tmp_path / "checkpoints"
     final_path = checkpoint_path / "step_000002"
     reexported_path = tmp_path / "adapter-reexported"
-    lora = LoraConfig(rank=4, alpha=8.0)
+    lora = LoraConfig(rank=8, alpha=16.0)
     backend_config = ArenoConfig(
         tp_size=2,
         dp_size=2,
@@ -145,8 +145,18 @@ def test_qwen3_lora_tp2_dp2_rollout_train_peft(tmp_path: Path, model_env: str, m
     else:
         assert any(".mlp." in name for name in changed)
 
-    initial_peft_logprobs = _peft_logprobs(model_path, initial_path, parity_tokens)
-    peft_logprobs = _peft_logprobs(model_path, final_path, parity_tokens)
+    if model_kind == "dense":
+        initial_peft_logprobs = _peft_logprobs(model_path, initial_path, parity_tokens)
+        peft_logprobs = _peft_logprobs(model_path, final_path, parity_tokens)
+    else:
+        expert_key = next(name for name in changed if ".experts." in name)
+        peft_logprobs = _peft_logprobs(
+            model_path,
+            final_path,
+            parity_tokens,
+            expected_state=final,
+            representative_key=expert_key,
+        )
     imported = Trainer(
         4,
         os.fspath(model_path),
@@ -175,16 +185,22 @@ def test_qwen3_lora_tp2_dp2_rollout_train_peft(tmp_path: Path, model_env: str, m
         rtol=0.0,
         atol=1.0e-5,
     )
-    native_delta = torch.tensor(areno_logprobs[1:]) - torch.tensor(initial_native_logprobs[1:])
-    peft_delta = torch.tensor(peft_logprobs) - torch.tensor(initial_peft_logprobs)
     if model_kind == "dense":
+        native_delta = torch.tensor(areno_logprobs[1:]) - torch.tensor(initial_native_logprobs[1:])
+        peft_delta = torch.tensor(peft_logprobs) - torch.tensor(initial_peft_logprobs)
         torch.testing.assert_close(native_delta, peft_delta, rtol=0.0, atol=1.5e-1)
     else:
-        assert torch.isfinite(peft_delta).all()
-        assert torch.count_nonzero(peft_delta) > 0
+        assert torch.isfinite(torch.tensor(peft_logprobs)).all()
 
 
-def _peft_logprobs(model_path: Path, adapter_path: Path, token_ids: list[int]) -> list[float]:
+def _peft_logprobs(
+    model_path: Path,
+    adapter_path: Path,
+    token_ids: list[int],
+    *,
+    expected_state: dict[str, torch.Tensor] | None = None,
+    representative_key: str | None = None,
+) -> list[float]:
     peft_source = os.getenv("ARENO_E2E_PEFT_SOURCE")
     if peft_source:
         sys.path.insert(0, peft_source)
@@ -197,11 +213,21 @@ def _peft_logprobs(model_path: Path, adapter_path: Path, token_ids: list[int]) -
 
     importlib_util.find_spec = find_spec_without_torchao
     try:
-        from peft import PeftModel
+        from peft import PeftModel, get_peft_model_state_dict
         from transformers import AutoModelForCausalLM
 
         base = AutoModelForCausalLM.from_pretrained(model_path, dtype=torch.bfloat16).to("cuda:0")
         model = PeftModel.from_pretrained(base, os.fspath(adapter_path), autocast_adapter_dtype=False).eval()
+        if expected_state is not None:
+            loaded = get_peft_model_state_dict(model, save_embedding_layers=False)
+            assert loaded.keys() == expected_state.keys()
+            assert representative_key is not None
+            torch.testing.assert_close(
+                loaded[representative_key].detach().cpu().float(),
+                expected_state[representative_key].float(),
+                rtol=0.0,
+                atol=0.0,
+            )
         tokens = torch.tensor([token_ids], device="cuda:0", dtype=torch.long)
         with torch.inference_mode():
             logits = model(input_ids=tokens).logits[0, :-1].float()

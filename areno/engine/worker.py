@@ -586,7 +586,7 @@ class ArenoWorker:
         if ctx.dp_size > 1:
             for parameter in self.adapter_registry.parameters():
                 for values in parameter.detach().reshape(-1).split(4 * 1024 * 1024):
-                    maximum = values.float()
+                    maximum = values.to(dtype=torch.float32, copy=True)
                     minimum = maximum.clone()
                     dist.all_reduce(maximum, op=dist.ReduceOp.MAX, group=ctx.dp_group)
                     dist.all_reduce(minimum, op=dist.ReduceOp.MIN, group=ctx.dp_group)
