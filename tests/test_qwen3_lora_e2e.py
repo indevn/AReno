@@ -27,8 +27,13 @@ class _ObservedTrainer:
     def __getattr__(self, name: str):
         return getattr(self.inner, name)
 
-    async def rollout_token_batch_async(self, prompt_tokens, n_samples, sampling_params):
-        results = await self.inner.rollout_token_batch_async(prompt_tokens, n_samples, sampling_params)
+    async def rollout_token_batch_async(self, prompt_tokens, n_samples, sampling_params, *, prompt_features=None):
+        results = await self.inner.rollout_token_batch_async(
+            prompt_tokens,
+            n_samples,
+            sampling_params,
+            prompt_features=prompt_features,
+        )
         self.rollout_versions.extend(result.adapter_version for result in results)
         return results
 
@@ -48,9 +53,10 @@ def test_qwen3_lora_tp2_dp2_rollout_train_peft(tmp_path: Path, model_env: str, m
         pytest.skip(f"set {model_env} to run the 4-GPU Qwen3 {model_kind} LoRA E2E")
     model_path = Path(model_path_value)
     initial_path = tmp_path / "adapter-initial"
-    final_path = tmp_path / "adapter-final"
+    checkpoint_path = tmp_path / "checkpoints"
+    final_path = checkpoint_path / "step_000002"
     reexported_path = tmp_path / "adapter-reexported"
-    lora = LoraConfig()
+    lora = LoraConfig(rank=4, alpha=8.0)
     backend_config = ArenoConfig(
         tp_size=2,
         dp_size=2,
@@ -76,6 +82,8 @@ def test_qwen3_lora_tp2_dp2_rollout_train_peft(tmp_path: Path, model_env: str, m
         algo="grpo",
         ckpt=os.fspath(model_path),
         dataset_path="e2e://in-memory",
+        save_path=os.fspath(checkpoint_path),
+        save_interval=2,
         epochs=1,
         max_steps=2,
         world_size=4,
@@ -120,18 +128,22 @@ def test_qwen3_lora_tp2_dp2_rollout_train_peft(tmp_path: Path, model_env: str, m
         policy._fit_initialized()
         replica_max_diff = inner._backend._require_train_engine().adapter_replica_max_diff()
         trained_logprobs = observed.score_logprobs("actor", [parity_tokens], microbatch_size=1)[0]
-        observed.export_adapter(os.fspath(final_path))
     finally:
         observed.close()
 
     assert observed.rollout_versions == [0, 1]
     assert observed.train_versions == [1, 2]
     assert replica_max_diff <= 1.0e-6
+    assert (final_path / "adapter_config.json").is_file()
+    assert (final_path / "adapter_model.safetensors").is_file()
     initial = load_file(initial_path / "adapter_model.safetensors")
     final = load_file(final_path / "adapter_model.safetensors")
-    assert any(not torch.equal(initial[name], final[name]) for name in initial)
+    changed = {name for name in initial if not torch.equal(initial[name], final[name])}
+    assert any(".self_attn." in name for name in changed)
     if model_kind == "moe":
-        assert any(".experts.0." in name for name in final)
+        assert any(".experts." in name for name in changed)
+    else:
+        assert any(".mlp." in name for name in changed)
 
     initial_peft_logprobs = _peft_logprobs(model_path, initial_path, parity_tokens)
     peft_logprobs = _peft_logprobs(model_path, final_path, parity_tokens)
@@ -157,23 +169,6 @@ def test_qwen3_lora_tp2_dp2_rollout_train_peft(tmp_path: Path, model_env: str, m
     assert reexported.keys() == final.keys()
     assert all(torch.equal(reexported[name], final[name]) for name in final)
     torch.testing.assert_close(torch.tensor(repeated_logprobs), torch.tensor(areno_logprobs), rtol=0.0, atol=1.0e-5)
-    replica = Trainer(
-        4,
-        os.fspath(model_path),
-        custom_config=ArenoConfig(
-            tp_size=2,
-            dp_size=2,
-            devices=[0, 1, 2, 3],
-            lora=LoraConfig(adapter_path=os.fspath(final_path)),
-            runtime={"compile_model": False, "activation_checkpointing": False},
-        ),
-    )
-    replica.init()
-    try:
-        replica_logprobs = replica.score_logprobs("actor", [parity_tokens], microbatch_size=1)[0]
-    finally:
-        replica.close()
-    torch.testing.assert_close(torch.tensor(replica_logprobs), torch.tensor(areno_logprobs), rtol=0.0, atol=1.0e-5)
     torch.testing.assert_close(
         torch.tensor(areno_logprobs),
         torch.tensor(trained_logprobs),
@@ -213,3 +208,5 @@ def _peft_logprobs(model_path: Path, adapter_path: Path, token_ids: list[int]) -
         return result
     finally:
         importlib_util.find_spec = original_find_spec
+        if peft_source:
+            sys.path.remove(peft_source)

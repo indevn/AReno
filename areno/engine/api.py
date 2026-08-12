@@ -700,13 +700,15 @@ class ArenoEngine:
         return merge_metric_dicts(rank0_results) or {}
 
     def save_checkpoint(self, path: str) -> str:
-        """Ask workers to write a HuggingFace-compatible checkpoint.
+        """Save base weights, or the standard PEFT artifact in native LoRA mode.
 
-        Dispatches ``Op.SAVE_CHECKPOINT`` (blocking). Workers cooperatively
-        write shards to ``path``; only rank 0's returned path is propagated
-        back to the caller.
+        Fullweight workers cooperatively write HuggingFace shards to ``path``.
+        Native LoRA keeps the base frozen, so its checkpoint is the adapter-only
+        PEFT artifact consumed by training and serving.
         """
 
+        if self.config.lora is not None:
+            return self.export_adapter(path)
         results = self.cluster.call(Op.SAVE_CHECKPOINT, SaveCheckpointPayload(path=path))
         return results[0]["path"]
 

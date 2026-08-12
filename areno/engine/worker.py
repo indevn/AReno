@@ -42,8 +42,6 @@ from areno.engine.protocol import (
 from areno.engine.roles import RoleManager, WorkerRole
 from areno.engine.runtime.common import pad_rollout_rows
 from areno.engine.runtime.decode_graph import DecodeGraph
-import os
-
 from areno.engine.runtime.rollout import _empty_rollout
 from areno.engine.training import TrainingManager
 from areno.models.registry import load_model_weights, save_model_weights
@@ -70,7 +68,7 @@ class ArenoWorker:
         self.adapter_registry = (
             initialize_lora(self.model, config.lora, seed=config.lora_seed) if config.lora is not None else None
         )
-        if config.runtime.compile_model and os.environ.get("ARENO_DISABLE_COMPILE") != "1":
+        if config.runtime.compile_model:
             self.model = torch.compile(self.model)
         if self.adapter_registry is not None and config.lora.adapter_path is not None:
             load_peft_adapter(self.adapter_registry, config.lora.adapter_path)
@@ -583,15 +581,18 @@ class ArenoWorker:
         if self.adapter_registry is None:
             return None
         ctx = get_tp_context()
-        values = torch.cat([parameter.detach().float().reshape(-1) for parameter in self.adapter_registry.parameters()])
+        difference = torch.zeros((), device=self.device, dtype=torch.float32)
         if ctx.dp_size > 1:
-            maximum = values.clone()
-            minimum = values.clone()
-            dist.all_reduce(maximum, op=dist.ReduceOp.MAX, group=ctx.dp_group)
-            dist.all_reduce(minimum, op=dist.ReduceOp.MIN, group=ctx.dp_group)
-            difference = (maximum - minimum).abs().max()
-        else:
-            difference = values.new_zeros(())
+            for parameter in self.adapter_registry.parameters():
+                for values in parameter.detach().reshape(-1).split(4 * 1024 * 1024):
+                    maximum = values.float()
+                    minimum = maximum.clone()
+                    dist.all_reduce(maximum, op=dist.ReduceOp.MAX, group=ctx.dp_group)
+                    dist.all_reduce(minimum, op=dist.ReduceOp.MIN, group=ctx.dp_group)
+                    maximum.sub_(minimum).abs_()
+                    difference.maximum_(maximum.max().float())
+        if ctx.world_size > 1:
+            dist.all_reduce(difference, op=dist.ReduceOp.MAX, group=ctx.group)
         return float(difference.cpu()) if ctx.is_rank0 else None
 
 

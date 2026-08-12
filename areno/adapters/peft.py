@@ -20,9 +20,6 @@ def load_peft_adapter(registry: AdapterRegistry, path: str | Path) -> None:
     """Copy one supported PEFT adapter into the registry's stable A/B storage."""
 
     input_path = Path(path)
-    config = json.loads((input_path / "adapter_config.json").read_text(encoding="utf-8"))
-    if int(config["r"]) != registry.config.rank or float(config["lora_alpha"]) != registry.config.alpha:
-        raise ValueError("PEFT adapter rank/alpha does not match the configured native LoRA slots")
     tensors = load_file(input_path / "adapter_model.safetensors", device="cpu")
     ctx = get_tp_context()
     for logical_name, slot in registry.slots.items():

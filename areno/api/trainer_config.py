@@ -69,6 +69,8 @@ class TrainerConfig:
             raise ValueError("attn_backend must be one of: flash, native")
         if self.model_hub not in {"hf", "modelscope"}:
             raise ValueError("model_hub must be one of: hf, modelscope")
+        if self.lora is not None and self.algo.lower() in {"ppo", "dpo"}:
+            raise ValueError("native LoRA does not yet support PPO/DPO reference and critic roles")
 
     def optimizer_config(self) -> dict:
         """Build the optimizer dict consumed by the backend config."""

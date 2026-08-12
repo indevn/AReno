@@ -529,7 +529,7 @@ class Trainer:
         )
 
     def save_checkpoint(self, path: str) -> str:
-        """Save a HuggingFace-compatible checkpoint when supported by backend."""
+        """Save base weights, or a standard PEFT artifact for native LoRA."""
 
         return self._backend.save_checkpoint(self._ctx, path)
 
