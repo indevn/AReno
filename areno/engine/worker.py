@@ -590,7 +590,7 @@ class ArenoWorker:
                     dist.all_reduce(maximum, op=dist.ReduceOp.MAX, group=ctx.dp_group)
                     dist.all_reduce(minimum, op=dist.ReduceOp.MIN, group=ctx.dp_group)
                     maximum.sub_(minimum).abs_()
-                    difference.maximum_(maximum.max().float())
+                    difference.copy_(torch.maximum(difference, maximum.max().float()))
         if ctx.world_size > 1:
             dist.all_reduce(difference, op=dist.ReduceOp.MAX, group=ctx.group)
         return float(difference.cpu()) if ctx.is_rank0 else None
