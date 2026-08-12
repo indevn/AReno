@@ -197,7 +197,7 @@ def _peft_logprobs(model_path: Path, adapter_path: Path, token_ids: list[int]) -
         from transformers import AutoModelForCausalLM
 
         base = AutoModelForCausalLM.from_pretrained(model_path, dtype=torch.bfloat16).to("cuda:0")
-        model = PeftModel.from_pretrained(base, adapter_path, autocast_adapter_dtype=False).eval()
+        model = PeftModel.from_pretrained(base, os.fspath(adapter_path), autocast_adapter_dtype=False).eval()
         tokens = torch.tensor([token_ids], device="cuda:0", dtype=torch.long)
         with torch.inference_mode():
             logits = model(input_ids=tokens).logits[0, :-1].float()
