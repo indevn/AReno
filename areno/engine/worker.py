@@ -360,8 +360,9 @@ class ArenoWorker:
         ]
 
     def _stamp_adapter_version(self, output: RolloutOutput) -> RolloutOutput:
-        if self.adapter_registry is not None:
-            output.adapter_version = self.adapter_registry.version
+        adapter_registry = getattr(self, "adapter_registry", None)
+        if adapter_registry is not None:
+            output.adapter_version = adapter_registry.version
         return output
 
     def _next_refill_command(self) -> Command | None:
