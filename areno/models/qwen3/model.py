@@ -125,7 +125,9 @@ class Qwen3MoeExperts(nn.Module):
             _areno_silu_and_mul_no_compile(hidden) * route_weight.unsqueeze(-1).to(dtype=hidden.dtype)
         ).contiguous()
         out = _areno_grouped_linear_no_compile(hidden, self.down_weight, tokens_per_expert)
-        out = _areno_moe_unpermute_no_compile(out, token_idx, flat.shape)
+        # Each token receives multiple expert routes; accumulate those atomics in FP32.
+        out = _areno_moe_unpermute_no_compile(out.float(), token_idx, flat.shape)
+        out = out.to(dtype=flat.dtype)
         return all_reduce(out)
 
     def local_routes(self, topk_idx: torch.Tensor, topk_weight: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
